@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthenticatedUser } from '@/lib/supabase/server-auth'
+import { createConversationServer, createPDFServer, createChatMessageServer, updateConversationServer } from '@/lib/supabase/database-server'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
 
@@ -6,11 +8,22 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
  * POST /api/upload
  * 
  * Handles PDF file uploads and forwards to FastAPI backend
+ * Also creates a conversation and saves PDF metadata to database
  */
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const user = await getAuthenticatedUser(request)
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Please sign in to upload files.' },
+        { status: 401 }
+      )
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File
+    const conversationId = formData.get('conversationId') as string | null
 
     if (!file) {
       return NextResponse.json(
@@ -60,7 +73,92 @@ export async function POST(request: NextRequest) {
       }
 
       const data = await response.json()
-      return NextResponse.json(data)
+      
+      // Use existing conversation if provided, otherwise create a new one
+      let conversation
+      try {
+        if (conversationId) {
+          // Use existing conversation
+          const { getConversationServer } = await import('@/lib/supabase/database-server')
+          const { data: existingConv, error: fetchError } = await getConversationServer(request, conversationId)
+          if (fetchError || !existingConv) {
+            console.error('Error fetching existing conversation:', fetchError)
+            // Fall back to creating a new conversation
+            const conversationTitle = file.name.replace('.pdf', '')
+            const { data: newConv, error: convError } = await createConversationServer(
+              request,
+              user.id,
+              conversationTitle
+            )
+            if (convError) {
+              console.error('Error creating conversation (fallback):', convError)
+              throw new Error(`Failed to create conversation: ${convError.message || JSON.stringify(convError)}`)
+            }
+            if (!newConv) {
+              throw new Error('Conversation was not created (fallback)')
+            }
+            conversation = newConv
+          } else {
+            conversation = existingConv
+          }
+        } else {
+          // Create new conversation
+          const conversationTitle = file.name.replace('.pdf', '')
+          const { data: newConv, error: convError } = await createConversationServer(
+            request,
+            user.id,
+            conversationTitle
+          )
+          if (convError) {
+            console.error('Error creating conversation:', convError)
+            throw new Error(`Failed to create conversation: ${convError.message || JSON.stringify(convError)}`)
+          }
+          if (!newConv) {
+            throw new Error('Conversation was not created')
+          }
+          conversation = newConv
+        }
+      } catch (dbError: any) {
+        console.error('Database error in upload route:', dbError)
+        // Return backend response even if database operations fail
+        return NextResponse.json({
+          ...data,
+          conversation_id: null,
+          warning: dbError.message || 'PDF uploaded but failed to save to database',
+        }, { status: 200 })
+      }
+
+      // Save PDF metadata to database
+      if (conversation) {
+        const { error: pdfError } = await createPDFServer(
+          request,
+          conversation.id,
+          user.id,
+          file.name,
+          file.size,
+          data.chunks_count || null,
+          data.session_id || null
+        )
+
+        if (pdfError) {
+          console.error('Error saving PDF:', pdfError)
+        }
+
+        // Save system message to database
+        const systemMessage = `PDF "${file.name}" uploaded and processed successfully. You can now ask questions about the document.`
+        await createChatMessageServer(
+          request,
+          conversation.id,
+          user.id,
+          'system',
+          systemMessage
+        ).catch((err: any) => console.error('Error saving system message:', err))
+      }
+
+      return NextResponse.json({
+        ...data,
+        conversation_id: conversation?.id || null,
+      })
     } catch (fetchError: any) {
       clearTimeout(timeoutId)
       
@@ -82,6 +180,12 @@ export async function POST(request: NextRequest) {
     }
   } catch (error: any) {
     console.error('Upload API error:', error)
+    console.error('Error stack:', error.stack)
+    console.error('Error details:', {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+    })
     
     if (error.message?.includes('ECONNREFUSED') || error.message?.includes('ECONNRESET')) {
       return NextResponse.json(
@@ -91,7 +195,10 @@ export async function POST(request: NextRequest) {
     }
     
     return NextResponse.json(
-      { error: error.message || 'Failed to upload file' },
+      { 
+        error: error.message || 'Failed to upload file',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     )
   }

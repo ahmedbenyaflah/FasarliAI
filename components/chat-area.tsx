@@ -1,12 +1,15 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, Sun, Moon, Settings, Menu, Upload, FileText } from 'lucide-react'
+import { Send, Paperclip, Sun, Moon, Settings, Menu, Upload, FileText, LogOut, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MessageBubble } from './message-bubble'
 import { SourcesPanel } from './sources-panel'
 import { useSession } from '@/contexts/session-context'
+import { useAuth } from '@/contexts/auth-context'
+import { getUser } from '@/lib/supabase/database'
+import { toast } from 'sonner'
 
 interface ChatAreaProps {
   viewMode: 'chat' | 'quiz' | 'flashcards'
@@ -24,12 +27,13 @@ interface Message {
 }
 
 export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaProps) {
-  const { sessionId, setSessionId, pdfName, setPdfName } = useSession()
-  const [messages, setMessages] = useState<Message[]>([])
+  const { sessionId, setSessionId, pdfName, setPdfName, conversationId, setConversationId, messages, setMessages } = useSession()
+  const { user, signOut } = useAuth()
   const [inputValue, setInputValue] = useState('')
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<string>('')
+  const [username, setUsername] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
 
@@ -43,6 +47,18 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    async function fetchUserData() {
+      if (user?.id) {
+        const { data } = await getUser(user.id)
+        if (data) {
+          setUsername(data.username)
+        }
+      }
+    }
+    fetchUserData()
+  }, [user])
 
   const handleUploadPDF = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -59,6 +75,10 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
     try {
       const formData = new FormData()
       formData.append('file', file)
+      // Include conversationId if one exists
+      if (conversationId) {
+        formData.append('conversationId', conversationId)
+      }
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -73,15 +93,69 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
       const data = await response.json()
       setSessionId(data.session_id)
       setPdfName(file.name)
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id)
+      }
       setUploadStatus(`PDF uploaded successfully! ${data.chunks_count} chunks created.`)
       
-      // Add system message
-      setMessages([{
-        id: Date.now().toString(),
-        author: 'System',
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        content: `PDF "${file.name}" uploaded and processed successfully. You can now ask questions about the document.`,
-      }])
+      // Reload messages from database to get the system message
+      if (data.conversation_id) {
+        try {
+          const { getChatMessages } = await import('@/lib/supabase/database')
+          const { data: dbMessages } = await getChatMessages(data.conversation_id)
+          if (dbMessages && dbMessages.length > 0) {
+            const formattedMessages = dbMessages.map(msg => ({
+              id: msg.id,
+              author: msg.author === 'user' ? 'You' : msg.author === 'assistant' ? 'FasarliAI' : msg.author === 'system' ? 'System' : msg.author,
+              avatar: msg.author === 'user' ? 'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/avatar-user.jpg' : msg.author === 'assistant' ? '⚡' : '',
+              timestamp: new Date(msg.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+              content: msg.content,
+              sources: msg.sources,
+            }))
+            setMessages(formattedMessages)
+          }
+        } catch (error) {
+          console.error('Error loading messages:', error)
+        }
+        
+        // Generate conversation name based on PDF content
+        if (data.session_id && data.conversation_id) {
+          setTimeout(async () => {
+            try {
+              const nameResponse = await fetch('/api/conversations/generate-name-from-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  sessionId: data.session_id,
+                  conversationId: data.conversation_id 
+                }),
+              })
+
+              if (nameResponse.ok) {
+                const { name } = await nameResponse.json()
+                
+                // Update conversation title
+                await fetch('/api/conversations/rename', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    conversationId: data.conversation_id,
+                    title: name,
+                  }),
+                })
+
+                // Refresh conversations list
+                window.dispatchEvent(new Event('conversation-created'))
+              }
+            } catch (error) {
+              console.error('Error generating conversation name:', error)
+            }
+          }, 2000) // Wait 2 seconds for PDF processing to complete
+        }
+      }
+      
+      // Trigger a page refresh to reload conversations list
+      window.dispatchEvent(new Event('conversation-created'))
     } catch (error) {
       setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Failed to upload PDF'}`)
     } finally {
@@ -94,8 +168,35 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return
+    
+    // If no conversation exists, create one
+    let currentConversationId = conversationId
+    if (!currentConversationId && user?.id) {
+      try {
+        const title = `Chat ${new Date().toLocaleDateString()}`
+        const response = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ title }),
+        })
+
+        if (response.ok) {
+          const { conversation } = await response.json()
+          currentConversationId = conversation.id
+          setConversationId(conversation.id)
+          window.dispatchEvent(new Event('conversation-created'))
+        }
+      } catch (error) {
+        console.error('Error creating conversation:', error)
+        toast.error('Failed to create conversation')
+      }
+    }
+
+    // If no session ID, we can still create a conversation but can't chat without PDF
     if (!sessionId) {
-      setUploadStatus('Please upload a PDF first')
+      setUploadStatus('Please upload a PDF first to start chatting')
       return
     }
 
@@ -107,7 +208,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
       content: inputValue,
     }
 
-    setMessages(prev => [...prev, userMessage])
+    setMessages((prev: Message[]) => [...prev, userMessage])
     const questionText = inputValue
     setInputValue('')
     setIsLoading(true)
@@ -121,6 +222,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
         body: JSON.stringify({
           message: questionText,
           sessionId: sessionId,
+          conversationId: currentConversationId,
         }),
       })
 
@@ -143,7 +245,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
       }
 
       // Add empty message first
-      setMessages(prev => [...prev, botMessage])
+      setMessages((prev: Message[]) => [...prev, botMessage])
 
       // Animate typing effect character by character
       const fullContent = data.content
@@ -152,7 +254,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
       const typeCharacter = () => {
         if (currentIndex < fullContent.length) {
           const currentContent = fullContent.substring(0, currentIndex + 1)
-          setMessages(prev => prev.map(msg => 
+          setMessages((prev: Message[]) => prev.map((msg: Message) => 
             msg.id === botMessageId 
               ? { ...msg, content: currentContent }
               : msg
@@ -175,7 +277,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
         timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
       }
-      setMessages(prev => [...prev, errorMessage])
+      setMessages((prev: Message[]) => [...prev, errorMessage])
       setIsLoading(false)
     }
   }
@@ -219,25 +321,24 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
             </Button>
             
             {showSettingsMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-card border border-border rounded-lg shadow-lg z-50">
+              <div className="absolute right-0 mt-2 w-56 bg-card border border-border rounded-lg shadow-lg z-50">
                 <div className="py-2">
+                  {username && (
+                    <div className="px-4 py-2 border-b border-border">
+                      <div className="flex items-center gap-2">
+                        <User className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium text-foreground">{username}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">{user?.email}</div>
+                    </div>
+                  )}
                   <Button 
                     variant="ghost" 
                     className="w-full justify-start px-4 py-2 text-foreground hover:bg-muted rounded-none"
+                    onClick={signOut}
                   >
-                    Login
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="w-full justify-start px-4 py-2 text-foreground hover:bg-muted rounded-none"
-                  >
-                    Sign Up
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="w-full justify-start px-4 py-2 text-foreground hover:bg-muted rounded-none"
-                  >
-                    Sign In
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign Out
                   </Button>
                 </div>
               </div>
@@ -273,7 +374,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
             <div key={msg.id}>
               <MessageBubble 
                 author={msg.author}
-                avatar={msg.avatar}
+                avatar={msg.avatar || ''}
                 timestamp={msg.timestamp}
                 content={msg.content}
               />

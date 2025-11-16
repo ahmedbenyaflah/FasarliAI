@@ -2,11 +2,25 @@
 
 import { createContext, useContext, useState, ReactNode } from 'react'
 
+interface Message {
+  id: string
+  author: string
+  avatar?: string
+  timestamp: string
+  content: string
+  sources?: Array<{ title: string; description: string; url?: string }>
+}
+
 interface SessionContextType {
   sessionId: string | null
   setSessionId: (id: string | null) => void
   pdfName: string | null
   setPdfName: (name: string | null) => void
+  conversationId: string | null
+  setConversationId: (id: string | null) => void
+  messages: Message[]
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>
+  clearSession: () => void
 }
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined)
@@ -14,9 +28,28 @@ const SessionContext = createContext<SessionContextType | undefined>(undefined)
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [pdfName, setPdfName] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
+
+  const clearSession = () => {
+    setSessionId(null)
+    setPdfName(null)
+    setConversationId(null)
+    setMessages([])
+  }
 
   return (
-    <SessionContext.Provider value={{ sessionId, setSessionId, pdfName, setPdfName }}>
+    <SessionContext.Provider value={{ 
+      sessionId, 
+      setSessionId, 
+      pdfName, 
+      setPdfName, 
+      conversationId,
+      setConversationId,
+      messages,
+      setMessages,
+      clearSession 
+    }}>
       {children}
     </SessionContext.Provider>
   )

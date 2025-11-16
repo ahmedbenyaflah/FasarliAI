@@ -124,8 +124,10 @@ All frontend routes proxy to the FastAPI backend:
 GROQ_API_KEY=your_groq_api_key_here
 ```
 
-### Frontend (.env.local) - Optional
+### Frontend (.env.local)
 ```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 BACKEND_URL=http://localhost:8000
 ```
 
@@ -163,13 +165,29 @@ uvicorn main:app --reload
 npm run dev
 ```
 
+## Database Setup (Supabase)
+
+The application uses Supabase for authentication and data storage. To set up the database:
+
+1. Create a Supabase project at [supabase.com](https://supabase.com)
+2. Run the migration file located in `supabase/migrations/001_initial_schema.sql`
+   - Go to SQL Editor in your Supabase dashboard
+   - Copy and paste the migration SQL
+   - Execute it
+3. See `supabase/README.md` for detailed setup instructions
+
+The database stores:
+- Users (automatically created in `users` table on signup)
+- Conversations (one per PDF upload)
+- PDF metadata
+- Chat message history
+
 ## Production Considerations
 
-- Use a database for session/vector store persistence
-- Implement proper authentication
+- Database is already set up with Supabase
+- Authentication is implemented with Supabase Auth
 - Add rate limiting
 - Use environment-specific CORS settings
-- Consider using Redis for session storage
 - Add logging and monitoring
 - Implement proper error handling and retries
 

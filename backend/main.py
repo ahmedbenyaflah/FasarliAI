@@ -386,6 +386,61 @@ async def generate_quiz(request: QuizRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate quiz: {str(e)}")
 
+class ConversationNameRequest(BaseModel):
+    session_id: str
+
+class ConversationNameResponse(BaseModel):
+    name: str
+
+@app.post("/api/generate-conversation-name", response_model=ConversationNameResponse)
+async def generate_conversation_name(request: ConversationNameRequest):
+    """Generate a short, clear conversation name based on PDF content."""
+    if request.session_id not in vector_stores:
+        raise HTTPException(status_code=400, detail="No PDF uploaded for this session.")
+    
+    try:
+        vector_store = vector_stores[request.session_id]
+        
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+        
+        llm = ChatGroq(
+            api_key=groq_api_key,
+            model_name="llama-3.1-8b-instant"
+        )
+        
+        # Get relevant content from PDF to understand what it's about
+        relevant_docs = vector_store.similarity_search("main topic subject title summary overview", k=3)
+        context = "\n\n".join([doc.page_content if hasattr(doc, 'page_content') else str(doc) for doc in relevant_docs])
+        
+        # Limit context size for faster processing
+        if len(context) > 1000:
+            context = context[:1000]
+        
+        prompt = f"""Based on the following PDF content, generate a short and clear conversation title (maximum 5-6 words). 
+The title should summarize what the PDF is about.
+
+PDF Content:
+{context}
+
+Generate only the title, nothing else. Make it concise and descriptive."""
+        
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content=prompt)]
+        response_obj = llm.invoke(messages)
+        
+        name = response_obj.content.strip() if hasattr(response_obj, 'content') else str(response_obj).strip()
+        
+        # Clean up the name (remove quotes, extra spaces, etc.)
+        name = name.strip('"').strip("'").strip()
+        if len(name) > 60:
+            name = name[:57] + "..."
+        
+        return ConversationNameResponse(name=name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate conversation name: {str(e)}")
+
 @app.post("/api/flashcards", response_model=FlashcardResponse)
 async def generate_flashcards(request: FlashcardRequest):
     """Generate flashcards from the PDF."""

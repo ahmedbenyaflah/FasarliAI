@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthenticatedUser } from '@/lib/supabase/server-auth'
+import { createChatMessageServer } from '@/lib/supabase/database-server'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
 
 /**
  * POST /api/chat
  * 
- * Proxies chat requests to FastAPI backend
+ * Proxies chat requests to FastAPI backend and saves messages to database
  * 
  * Expected request body:
  * {
@@ -16,8 +18,17 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
  */
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const user = await getAuthenticatedUser(request)
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Please sign in to send messages.' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
-    const { message, sessionId } = body
+    const { message, sessionId, conversationId } = body
 
     if (!message) {
       return NextResponse.json(
@@ -78,6 +89,29 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json()
+    
+    // Save user message to database
+    if (conversationId) {
+      await createChatMessageServer(
+        request,
+        conversationId,
+        user.id,
+        'user',
+        message
+      ).catch(err => console.error('Error saving user message:', err))
+    }
+
+    // Save assistant response to database
+    if (conversationId) {
+      await createChatMessageServer(
+        request,
+        conversationId,
+        user.id,
+        'assistant',
+        data.content,
+        data.sources || null
+      ).catch(err => console.error('Error saving assistant message:', err))
+    }
     
     // Format timestamp for display
     const timestamp = new Date(data.timestamp).toLocaleTimeString('en-US', {
