@@ -20,6 +20,8 @@ interface SessionContextType {
   setConversationId: (id: string | null) => void
   messages: Message[]
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>
+  pdfLoading: boolean
+  setPdfLoading: (loading: boolean) => void
   clearSession: () => void
 }
 
@@ -30,12 +32,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [pdfName, setPdfName] = useState<string | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [pdfLoading, setPdfLoading] = useState<boolean>(false)
 
   const clearSession = () => {
     setSessionId(null)
     setPdfName(null)
     setConversationId(null)
     setMessages([])
+    setPdfLoading(false)
   }
 
   return (
@@ -48,6 +52,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConversationId,
       messages,
       setMessages,
+      pdfLoading,
+      setPdfLoading,
       clearSession 
     }}>
       {children}

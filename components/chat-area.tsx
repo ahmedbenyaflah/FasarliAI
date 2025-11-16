@@ -27,7 +27,7 @@ interface Message {
 }
 
 export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaProps) {
-  const { sessionId, setSessionId, pdfName, setPdfName, conversationId, setConversationId, messages, setMessages } = useSession()
+  const { sessionId, setSessionId, pdfName, setPdfName, conversationId, setConversationId, messages, setMessages, pdfLoading } = useSession()
   const { user, signOut } = useAuth()
   const [inputValue, setInputValue] = useState('')
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
@@ -403,12 +403,18 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
       <div className="px-6 py-4 border-t border-border bg-card space-y-2">
         <div className="flex gap-3">
           <Input
-            placeholder={sessionId ? "Message FasarliAI..." : "Upload a PDF first to start chatting..."}
+            placeholder={
+              pdfLoading 
+                ? "Loading PDF..." 
+                : sessionId 
+                  ? "Message FasarliAI..." 
+                  : "Upload a PDF first to start chatting..."
+            }
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
+            onKeyDown={(e) => e.key === 'Enter' && !isLoading && !pdfLoading && handleSendMessage()}
             className="flex-1 bg-background border-border"
-            disabled={!sessionId || isLoading}
+            disabled={!sessionId || isLoading || pdfLoading}
           />
           <input
             type="file"
@@ -428,7 +434,7 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
           </Button>
           <Button 
             onClick={handleSendMessage}
-            disabled={!sessionId || isLoading || !inputValue.trim()}
+            disabled={!sessionId || isLoading || pdfLoading || !inputValue.trim()}
             className="bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:opacity-90 disabled:opacity-50"
             size="icon"
           >
@@ -436,9 +442,11 @@ export function ChatArea({ viewMode, sidebarOpen, onToggleSidebar }: ChatAreaPro
           </Button>
         </div>
         <p className="text-xs text-muted-foreground text-center">
-          {sessionId 
-            ? "FasarliAI can make mistakes. Check the answers."
-            : "Upload a PDF file to start asking questions about it."}
+          {pdfLoading
+            ? "Loading PDF from storage..."
+            : sessionId 
+              ? "FasarliAI can make mistakes. Check the answers."
+              : "Upload a PDF file to start asking questions about it."}
         </p>
       </div>
     </div>

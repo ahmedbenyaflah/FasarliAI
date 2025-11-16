@@ -34,7 +34,8 @@ export async function createPDFServer(
   filename: string,
   fileSize: number | null,
   chunksCount: number | null,
-  vectorStoreSessionId: string | null
+  vectorStoreSessionId: string | null,
+  storagePath: string | null = null
 ) {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -60,7 +61,41 @@ export async function createPDFServer(
       file_size: fileSize,
       chunks_count: chunksCount,
       vector_store_session_id: vectorStoreSessionId,
+      storage_path: storagePath,
     })
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+export async function updatePDFServer(
+  request: NextRequest,
+  pdfId: string,
+  updates: {
+    vector_store_session_id?: string | null
+    storage_path?: string | null
+  }
+) {
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll() {
+          // Cookies are handled by middleware
+        },
+      },
+    }
+  )
+  
+  const { data, error } = await supabase
+    .from('pdfs')
+    .update(updates)
+    .eq('id', pdfId)
     .select()
     .single()
 
@@ -155,6 +190,31 @@ export async function updateConversationServer(
     .update({ title })
     .eq('id', conversationId)
     .select()
+    .single()
+
+  return { data, error }
+}
+
+export async function getPDFByConversationServer(request: NextRequest, conversationId: string) {
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll() {
+          // Cookies are handled by middleware
+        },
+      },
+    }
+  )
+  
+  const { data, error } = await supabase
+    .from('pdfs')
+    .select('*')
+    .eq('conversation_id', conversationId)
     .single()
 
   return { data, error }

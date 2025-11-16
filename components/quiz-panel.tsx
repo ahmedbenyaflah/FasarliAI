@@ -29,6 +29,11 @@ export function QuizPanel() {
       return
     }
 
+    // Prevent duplicate requests
+    if (isLoading) {
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
@@ -60,8 +65,14 @@ export function QuizPanel() {
   }
 
   useEffect(() => {
-    if (sessionId && questions.length === 0) {
+    let mounted = true
+    
+    if (sessionId && questions.length === 0 && !isLoading) {
       generateQuiz()
+    }
+    
+    return () => {
+      mounted = false
     }
   }, [sessionId])
 

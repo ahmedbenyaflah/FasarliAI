@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthenticatedUser } from '@/lib/supabase/server-auth'
 import { createConversationServer, createPDFServer, createChatMessageServer, updateConversationServer } from '@/lib/supabase/database-server'
+import { uploadPDFToStorage } from '@/lib/supabase/storage'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
 
@@ -74,6 +75,15 @@ export async function POST(request: NextRequest) {
 
       const data = await response.json()
       
+      // Upload PDF to Supabase Storage
+      let storagePath: string | null = null
+      try {
+        // We'll upload after conversation is created
+      } catch (storageError) {
+        console.error('Error preparing storage upload:', storageError)
+        // Continue even if storage fails
+      }
+      
       // Use existing conversation if provided, otherwise create a new one
       let conversation
       try {
@@ -128,6 +138,22 @@ export async function POST(request: NextRequest) {
         }, { status: 200 })
       }
 
+      // Upload PDF to Supabase Storage
+      if (conversation) {
+        const { path: uploadedPath, error: storageError } = await uploadPDFToStorage(
+          request,
+          user.id,
+          conversation.id,
+          file
+        )
+        
+        if (storageError) {
+          console.error('Error uploading PDF to storage:', storageError)
+        } else {
+          storagePath = uploadedPath
+        }
+      }
+
       // Save PDF metadata to database
       if (conversation) {
         const { error: pdfError } = await createPDFServer(
@@ -137,7 +163,8 @@ export async function POST(request: NextRequest) {
           file.name,
           file.size,
           data.chunks_count || null,
-          data.session_id || null
+          data.session_id || null,
+          storagePath
         )
 
         if (pdfError) {

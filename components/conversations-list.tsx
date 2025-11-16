@@ -5,7 +5,7 @@ import { FileText, Trash2, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useSession } from '@/contexts/session-context'
-import { getConversations, deleteConversation, getPDFByConversation, getChatMessages } from '@/lib/supabase/database'
+import { getConversations, getPDFByConversation, getChatMessages } from '@/lib/supabase/database'
 import { Conversation } from '@/lib/supabase/database'
 import { toast } from 'sonner'
 
@@ -15,7 +15,7 @@ interface ConversationsListProps {
 
 export function ConversationsList({ onSelectConversation }: ConversationsListProps) {
   const { user } = useAuth()
-  const { conversationId, setConversationId, setSessionId, setPdfName, setMessages } = useSession()
+  const { conversationId, setConversationId, setSessionId, setPdfName, setMessages, setPdfLoading } = useSession()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -58,19 +58,7 @@ export function ConversationsList({ onSelectConversation }: ConversationsListPro
     try {
       setConversationId(conv.id)
       
-      // Get PDF for this conversation (if exists)
-      const { data: pdf } = await getPDFByConversation(conv.id)
-      
-      if (pdf) {
-        setSessionId(pdf.vector_store_session_id || null)
-        setPdfName(pdf.filename)
-      } else {
-        // No PDF for this conversation yet
-        setSessionId(null)
-        setPdfName(null)
-      }
-      
-      // Load messages for this conversation (including system messages)
+      // STEP 1: Load messages FIRST (including system messages)
       const { data: messages } = await getChatMessages(conv.id)
       if (messages && messages.length > 0) {
         const formattedMessages = messages.map(msg => ({
@@ -87,12 +75,60 @@ export function ConversationsList({ onSelectConversation }: ConversationsListPro
         setMessages([])
       }
       
+      // STEP 2: THEN load PDF and reload from storage
+      // Get PDF for this conversation (if exists)
+      const { data: pdf } = await getPDFByConversation(conv.id)
+      
+      if (pdf) {
+        setPdfName(pdf.filename)
+        
+        // Always reload PDF from storage to ensure vector store is available for quiz/flashcards
+        if (pdf.storage_path) {
+          // Set loading state to disable chat input
+          setPdfLoading(true)
+          
+          try {
+            const reloadResponse = await fetch('/api/conversations/reload-pdf', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ conversationId: conv.id }),
+            })
+            
+            if (reloadResponse.ok) {
+              const { session_id } = await reloadResponse.json()
+              setSessionId(session_id)
+            } else {
+              console.error('Failed to reload PDF')
+              // Fall back to existing session_id if reload fails
+              setSessionId(pdf.vector_store_session_id || null)
+            }
+          } catch (error) {
+            console.error('Error reloading PDF:', error)
+            // Fall back to existing session_id if reload fails
+            setSessionId(pdf.vector_store_session_id || null)
+          } finally {
+            // Always clear loading state
+            setPdfLoading(false)
+          }
+        } else {
+          // No storage path, use existing session_id if available
+          setSessionId(pdf.vector_store_session_id || null)
+          setPdfLoading(false)
+        }
+      } else {
+        // No PDF for this conversation yet
+        setSessionId(null)
+        setPdfName(null)
+        setPdfLoading(false)
+      }
+      
       if (onSelectConversation) {
         onSelectConversation(conv.id)
       }
     } catch (error) {
       console.error('Error loading conversation:', error)
       toast.error('Failed to load conversation')
+      setPdfLoading(false)
     }
   }
 
@@ -137,29 +173,33 @@ export function ConversationsList({ onSelectConversation }: ConversationsListPro
   const handleDeleteConversation = async (convId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     
-    if (!confirm('Are you sure you want to delete this conversation?')) {
+    if (!confirm('Are you sure you want to delete this conversation? This will also delete the PDF from storage.')) {
       return
     }
 
     try {
-      const { error } = await deleteConversation(convId)
-      if (error) {
-        toast.error('Failed to delete conversation')
-      } else {
-        toast.success('Conversation deleted')
-        loadConversations()
-        
-        // Clear session if deleted conversation was active
-        if (conversationId === convId) {
-          setConversationId(null)
-          setSessionId(null)
-          setPdfName(null)
-          setMessages([])
-        }
+      const response = await fetch(`/api/conversations/delete?conversationId=${convId}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to delete conversation')
+      }
+
+      toast.success('Conversation and PDF deleted')
+      loadConversations()
+      
+      // Clear session if deleted conversation was active
+      if (conversationId === convId) {
+        setConversationId(null)
+        setSessionId(null)
+        setPdfName(null)
+        setMessages([])
       }
     } catch (error) {
       console.error('Error deleting conversation:', error)
-      toast.error('Failed to delete conversation')
+      toast.error(error instanceof Error ? error.message : 'Failed to delete conversation')
     }
   }
 

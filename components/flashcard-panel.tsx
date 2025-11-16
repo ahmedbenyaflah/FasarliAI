@@ -32,6 +32,11 @@ export function FlashcardPanel() {
       return
     }
 
+    // Prevent duplicate requests
+    if (isLoading) {
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
@@ -81,8 +86,14 @@ export function FlashcardPanel() {
   }
 
   useEffect(() => {
-    if (sessionId && flashcards.length === 0) {
+    let mounted = true
+    
+    if (sessionId && flashcards.length === 0 && !isLoading) {
       generateFlashcards()
+    }
+    
+    return () => {
+      mounted = false
     }
   }, [sessionId])
 
