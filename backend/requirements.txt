@@ -1,13 +1,22 @@
+# Web Framework
 fastapi
-uvicorn[standard]
-python-multipart
-pypdf
-langchain
-langchain-community
-langchain-classic
-langchain-groq
-langchain-text-splitters
-sentence-transformers
-faiss-cpu
-python-dotenv
+uvicorn[standard]  # ASGI server with standard extras (websockets, watchfiles)
+python-multipart  # Required for file uploads in FastAPI
+
+# PDF Processing
+pypdf  # PDF text extraction
+
+# LangChain Ecosystem
+langchain  # Core LangChain framework
+langchain-community  # Community integrations (HuggingFace embeddings, FAISS)
+langchain-classic  # Classic LangChain chains (RetrievalQA)
+langchain-groq  # Groq LLM integration
+langchain-text-splitters  # Text chunking utilities
+
+# Machine Learning & Embeddings
+sentence-transformers  # HuggingFace sentence transformers for embeddings
+faiss-cpu  # Facebook AI Similarity Search for vector storage (CPU version)
+
+# Environment Variables
+python-dotenv  # Load environment variables from .env file
 
